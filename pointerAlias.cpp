@@ -15,11 +15,14 @@
 #include "llvm/Analysis/MemoryLocation.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include <iostream>
+#include <unordered_map>
 
 using namespace std;
 using namespace llvm;
 
 namespace {
+
+unordered_map<Instruction *, vector<Instruction *> > ptr_to_sub_mapping;
 
 struct pointerAlias : public FunctionPass {
   static char ID;
@@ -37,6 +40,8 @@ struct pointerAlias : public FunctionPass {
 
   }
 
+  
+
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<AAResultsWrapperPass>();
     AU.addPreserved<AAResultsWrapperPass>();
@@ -45,15 +50,88 @@ struct pointerAlias : public FunctionPass {
     AU.setPreservesAll();
   }
 
+ 
+  void display(){
+    cout << "displaying ptr to sub array!!" << endl;
+
+    for(auto it: ptr_to_sub_mapping){
+      it.first->dump();
+    }
+
+  }
+
+  bool check_key(unordered_map<Instruction *, vector<Instruction *> > m, Instruction * key) 
+  { 
+    // Key is not present 
+    if (m.find(key) == m.end()) 
+        return false; 
+  
+    return true; 
+  }
+
+  bool traceSubtrFromGEP(Instruction * I, Instruction * gep_inst ){
+
+    int n;
+
+    if(strcmp(I->getOpcodeName(), "sub") == 0){
+      cout << "found sub!" << endl;
+
+      if(!check_key(ptr_to_sub_mapping, I)){
+        
+        //create a new key and update it with the first GEP instruction
+        cout << "adding key to ptr to sub mapping!" << endl;
+        vector<Instruction *> trythis;
+        trythis.push_back(gep_inst);
+        ptr_to_sub_mapping.insert({I, trythis});
+
+      }
+      else{
+
+        cout << "updating key!" << endl;
+        ptr_to_sub_mapping[I].push_back(gep_inst);
+      }
+
+      return true; 
+      
+    }
+    
+    for(auto U : I->users()){  // U is of type User*
+    
+        //cast child user as instruction
+        auto child_I = dyn_cast<Instruction>(U);
+
+        child_I->dump();
+
+        //if the next user is store, we need to obtain the destination operand of the store, then resume tracing
+        if(strcmp(child_I->getOpcodeName(), "store") == 0){ 
+          for (Use &dest_operand : child_I->operands()) {
+            child_I = dyn_cast<Instruction>(dest_operand);
+            child_I->dump();
+          }          
+        }
+
+        // cin >> n;
+
+        if(traceSubtrFromGEP(child_I, gep_inst))
+          return true;
+        
+    }
+
+  }
+
   bool runOnFunction(Function &F) override {
-    auto AA = &(getAnalysis<AAResultsWrapperPass>().getAAResults());
+
+    unordered_map<Instruction *, vector<Instruction *> > ptr_to_sub_mapping;
+
+    AAResults * AA = &(getAnalysis<AAResultsWrapperPass>().getAAResults());
     auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
+
     // Add all pointers from M to the initial list of pointers
     SetVector<Instruction *> Inst_List;
     SetVector<Instruction *> gep_inst_arr;
-    SetVector<Instruction *> ptrtoint_inst_arr;
+    SetVector<Instruction *> sub_inst_arr;
     int no_of_gep = 0;
-    int no_of_ptrtoint = 0;
+    int no_of_sub = 0;
 
     for (Function::iterator Fit = F.begin(), Fend = F.end(); Fit != Fend;
          ++Fit) {
@@ -64,97 +142,73 @@ struct pointerAlias : public FunctionPass {
 
         Instruction *I = &*BBit;
 
+        
         if (strcmp(I->getOpcodeName(), "getelementptr") == 0){
 
           cout << "found GEP!" << endl;
-          // auto scev_expression = SE.getSCEV(I);
-          // string trythis = convert_scev_to_string(scev_expression);
+          I->dump();
 
-          // cout << trythis << endl;
+          traceSubtrFromGEP(I, I); 
+
           no_of_gep++;
           gep_inst_arr.insert(I);
         }   
+
         if (strcmp(I->getOpcodeName(), "sub") == 0){
           cout << "found sub!" << endl;
-
-          auto scev_expression = SE.getSCEV(I);
-          string trythis = convert_scev_to_string(scev_expression);
-          cout << trythis << endl;
-          
-          no_of_ptrtoint++;
-          ptrtoint_inst_arr.insert(I);
+          no_of_sub++;
+          sub_inst_arr.insert(I);
         }    
 
-        
         Inst_List.insert(I);
       }
     }
-    // size_t  = Inst_List.size();
-
-    cout << no_of_gep << endl;
-    cout << no_of_ptrtoint << endl;
-
-    exit(0);
-
-    //compare nC2 gep instructions
+    
     // for (int i = 0; i < no_of_gep; i++)
     // {
-    //   for (int j = i; j < no_of_gep; j++)
+    //   for (int j = i+1; j < no_of_gep; j++)
     //   {
-    //     if(i == j)
-    //       continue;
-
-    //     cout << i << " " << j << endl;
-
-    //     switch (AA->alias(gep_inst_arr[i], LocationSize::precise(sizeof(int)*10), gep_inst_arr[j], LocationSize::precise(sizeof(int)*10))) {
-  
-    //       case 0: //NoAlias
-    //           errs() << *gep_inst_arr[i] << " is No alias of " << *gep_inst_arr[j] << "; " << "\n*************************\n";
-    //           break;
-    //       case 1: //MayAlias
-    //           errs() << *gep_inst_arr[i] << " is May alias of " << *gep_inst_arr[j] << "; " << "\n*************************\n";
-    //           break;
-    //       case 2: //PartialAlias
-    //           errs() << *gep_inst_arr[i] << " is Partial alias of " << *gep_inst_arr[j] << "; " << "\n*************************\n";
-    //           break;
-    //       case 3: //MustAlias
-    //           errs() << *gep_inst_arr[i] << " is Must alias of " << *gep_inst_arr[j] << "; " << "\n*************************\n";
-    //           break;
-    //       }
-        
+    //     gep_inst_arr[i]->dump();
+    //     gep_inst_arr[j]->dump();
+    //     cout << AA->alias(gep_inst_arr[i], LocationSize::precise(sizeof(int)*2), gep_inst_arr[j], LocationSize::precise(sizeof(int)*2)) << endl;
     //   }
       
     // }
+    // exit(0);
+    
+    
+    for(auto it: ::ptr_to_sub_mapping){
+      // it.first->dump();
+      cout << it.second.size() << endl;
 
-    // compare nC2 gep instructions
-    for (int i = 0; i < no_of_gep; i++)
-    {
-      for (int j = 0; j < no_of_ptrtoint; j++)
-      {
-        // if(i == j)
-          // continue;
+      if(it.second.size() == 2){ //single sub inst is associated with 2 GEPS, check the alias() between these 2 GEPS
 
-        // cout << i << " " << j << endl;
-
-        switch (AA->alias(gep_inst_arr[i], LocationSize::precise(sizeof(int)*10), ptrtoint_inst_arr[j], LocationSize::precise(sizeof(int)*10))) {
+      switch (AA->alias(it.second[0], LocationSize::precise(sizeof(int)*10), it.second[1], LocationSize::precise(sizeof(int)*10))) {
   
           case 0: //NoAlias
-              errs() << *gep_inst_arr[i] << " is No alias of " << *ptrtoint_inst_arr[j] << "; " << "\n*************************\n";
+              errs() <<  *it.second[0] << " is No alias of " << *it.second[1]<< "; " << "\n*************************\n";
               break;
           case 1: //MayAlias
-              errs() << *gep_inst_arr[i] << " is May alias of " << *ptrtoint_inst_arr[j] << "; " << "\n*************************\n";
+              errs() << *it.second[0] << " is May alias of " <<  *it.second[1] << "; " << "\n*************************\n";
               break;
           case 2: //PartialAlias
-              errs() << *gep_inst_arr[i] << " is Partial alias of " << *ptrtoint_inst_arr[j] << "; " << "\n*************************\n";
+              errs() << *it.second[0] << " is Partial alias of " <<  *it.second[1] << "; " << "\n*************************\n";
               break;
           case 3: //MustAlias
-              errs() << *gep_inst_arr[i] << " is Must alias of " << *ptrtoint_inst_arr[j] << "; " << "\n*************************\n";
+              errs() << *it.second[0] << " is Must alias of " <<  *it.second[1] << "; " << "\n*************************\n";
               break;
-          }
-        
       }
-      
+
+      }
     }
+
+    exit(0);
+    
+
+    
+    
+
+    
     
     exit(0);
 
@@ -171,14 +225,7 @@ struct pointerAlias : public FunctionPass {
         auto I1 = (dyn_cast<Instruction>(Inst->getOperand(0)))->getOperand(0);
         auto I2 = (dyn_cast<Instruction>(Inst->getOperand(1)))->getOperand(0);
 
-        // auto P1 = (dyn_cast<Instruction>(I1))->getOperand(0);
-        // auto P2 = (dyn_cast<Instruction>(I2))->getOperand(0);
-
-        // cout << AA->alias(I1, I2) << endl;
-        // cout << AA->isMustAlias(I1, I2) << endl;
-
-        // cout << LocationSize::precise(64).getValue();
-        // exit(0);
+      
         switch (AA->alias(I1, LocationSize::precise(1), I2, LocationSize::precise(1))) {
   
           case 0: //NoAlias
@@ -193,23 +240,9 @@ struct pointerAlias : public FunctionPass {
           case 3: //MustAlias
               errs() << *I1 << " is Must alias of " << *I2 << "; " << "\n*************************\n";
               break;
-          }
+        }
       }
 
-      // for (unsigned j = i + 1; j < n; ++j) {
-      //     p[1] = Inst_List[j];
-      //     switch (AA->alias(p[0], p[1])) {
-      //     case MayAlias:
-      //     case PartialAlias:
-      //     case MustAlias:
-      //         errs() << *p[0] << " is alias of " << *p[1]
-      //                 << "; " << AA->alias(p[0], p[1]) << "\n";
-
-      //         break;
-      //     case NoAlias:
-      //         break;
-      //     }
-      // }
     }
 
     return false;
