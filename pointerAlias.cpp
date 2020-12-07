@@ -1,3 +1,13 @@
+/* TO DO: 
+
+1. Not working for pointers to multidim arrays
+2. Only working for subtr between 2 pointers to an array, not working btw ptr and array base ref 
+3. Not working for subtr btw 2 interprocedural pts
+
+*/ 
+
+
+
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/IntEqClasses.h"
 #include "llvm/ADT/SetVector.h"
@@ -22,25 +32,13 @@ using namespace llvm;
 
 namespace {
 
-unordered_map<Instruction *, vector<Instruction *> > ptr_to_sub_mapping;
+unordered_map<Instruction *, vector<Instruction *> > sub_to_gep_map;
 
 struct pointerAlias : public FunctionPass {
   static char ID;
 
   pointerAlias() : FunctionPass(ID) {}
 
-  string convert_scev_to_string(const SCEV *scev_here){
-
-    string scev_str;
-    
-    raw_string_ostream rso(scev_str);
-    scev_here->print(rso);
-
-    return rso.str();
-
-  }
-
-  
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<AAResultsWrapperPass>();
@@ -50,12 +48,22 @@ struct pointerAlias : public FunctionPass {
     AU.setPreservesAll();
   }
 
+  string convert_scev_to_string(const SCEV *scev_here){
+
+    string scev_str;
+    raw_string_ostream rso(scev_str);
+    scev_here->print(rso);
+    return rso.str();
+
+  }
+
  
-  void display(){
+  void display_mapping(){
     cout << "displaying ptr to sub array!!" << endl;
 
-    for(auto it: ptr_to_sub_mapping){
+    for(auto it: sub_to_gep_map){
       it.first->dump();
+      // cout << ""
     }
 
   }
@@ -69,29 +77,29 @@ struct pointerAlias : public FunctionPass {
     return true; 
   }
 
-  bool traceSubtrFromGEP(Instruction * I, Instruction * gep_inst ){
+  bool build_sub_mapping(Instruction * I, Instruction * gep_inst ){
 
     int n;
 
     if(strcmp(I->getOpcodeName(), "sub") == 0){
-      cout << "found sub!" << endl;
+      // cout << "found sub!" << endl;
 
-      if(!check_key(ptr_to_sub_mapping, I)){
+      if(!check_key(sub_to_gep_map, I)){
         
         //create a new key and update it with the first GEP instruction
-        cout << "adding key to ptr to sub mapping!" << endl;
+        cout << "adding key to ptr to sub mapping!" << endl << endl;
         vector<Instruction *> trythis;
         trythis.push_back(gep_inst);
-        ptr_to_sub_mapping.insert({I, trythis});
+        sub_to_gep_map.insert({I, trythis});
 
       }
       else{
 
-        cout << "updating key!" << endl;
-        ptr_to_sub_mapping[I].push_back(gep_inst);
+        cout << "updating key!" << endl << endl;
+        sub_to_gep_map[I].push_back(gep_inst);
       }
 
-      return true; 
+      return false; //continue DFS and build mapping 
       
     }
     
@@ -99,20 +107,37 @@ struct pointerAlias : public FunctionPass {
     
         //cast child user as instruction
         auto child_I = dyn_cast<Instruction>(U);
+        Instruction * next_I;
 
+        cout << "child is:" << endl;
         child_I->dump();
 
-        //if the next user is store, we need to obtain the destination operand of the store, then resume tracing
+        //if the next user is store, we need to obtain the destination instruction * of the store op, then resume tracing
         if(strcmp(child_I->getOpcodeName(), "store") == 0){ 
+          
+          // cout << "child is store! checking for circular loop!" << endl;
+          //get the destination operand and cast to instruction
           for (Use &dest_operand : child_I->operands()) {
-            child_I = dyn_cast<Instruction>(dest_operand);
-            child_I->dump();
-          }          
+            next_I = dyn_cast<Instruction>(dest_operand);
+            
+          }
+          // cout << "stores next child is: " << endl;
+        
+          //check to see if next user is the previous instruction itself to avoid circular loop
+          if(next_I->isIdenticalTo(I)){
+            cout << "Loop present!" << endl;
+            return true; //stop the DFS
+          }
+          else{
+            // cout << "Loop not present, continue tracing..." << endl;
+            child_I = next_I;
+          }         
+
         }
 
         // cin >> n;
 
-        if(traceSubtrFromGEP(child_I, gep_inst))
+        if(build_sub_mapping(child_I, gep_inst)) //check if DFS needs to be stopped
           return true;
         
     }
@@ -121,7 +146,7 @@ struct pointerAlias : public FunctionPass {
 
   bool runOnFunction(Function &F) override {
 
-    unordered_map<Instruction *, vector<Instruction *> > ptr_to_sub_mapping;
+    unordered_map<Instruction *, vector<Instruction *> > sub_to_gep_map;
 
     AAResults * AA = &(getAnalysis<AAResultsWrapperPass>().getAAResults());
     auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
@@ -148,14 +173,14 @@ struct pointerAlias : public FunctionPass {
           cout << "found GEP!" << endl;
           I->dump();
 
-          traceSubtrFromGEP(I, I); 
+          build_sub_mapping(I, I); 
 
           no_of_gep++;
           gep_inst_arr.insert(I);
         }   
 
         if (strcmp(I->getOpcodeName(), "sub") == 0){
-          cout << "found sub!" << endl;
+          // cout << "found sub!" << endl;
           no_of_sub++;
           sub_inst_arr.insert(I);
         }    
@@ -163,46 +188,36 @@ struct pointerAlias : public FunctionPass {
         Inst_List.insert(I);
       }
     }
+    cout << endl <<  "Results: " << endl;
     
-    // for (int i = 0; i < no_of_gep; i++)
-    // {
-    //   for (int j = i+1; j < no_of_gep; j++)
-    //   {
-    //     gep_inst_arr[i]->dump();
-    //     gep_inst_arr[j]->dump();
-    //     cout << AA->alias(gep_inst_arr[i], LocationSize::precise(sizeof(int)*2), gep_inst_arr[j], LocationSize::precise(sizeof(int)*2)) << endl;
-    //   }
-      
-    // }
-    // exit(0);
+    for(auto it: ::sub_to_gep_map){
     
-    
-    for(auto it: ::ptr_to_sub_mapping){
-      // it.first->dump();
-      cout << it.second.size() << endl;
-
       if(it.second.size() == 2){ //single sub inst is associated with 2 GEPS, check the alias() between these 2 GEPS
 
-      switch (AA->alias(it.second[0], LocationSize::precise(sizeof(int)*10), it.second[1], LocationSize::precise(sizeof(int)*10))) {
-  
-          case 0: //NoAlias
-              errs() <<  *it.second[0] << " is No alias of " << *it.second[1]<< "; " << "\n*************************\n";
-              break;
-          case 1: //MayAlias
-              errs() << *it.second[0] << " is May alias of " <<  *it.second[1] << "; " << "\n*************************\n";
-              break;
-          case 2: //PartialAlias
-              errs() << *it.second[0] << " is Partial alias of " <<  *it.second[1] << "; " << "\n*************************\n";
-              break;
-          case 3: //MustAlias
-              errs() << *it.second[0] << " is Must alias of " <<  *it.second[1] << "; " << "\n*************************\n";
-              break;
-      }
+        switch (AA->alias(it.second[0], LocationSize::precise(sizeof(int)*10), it.second[1], LocationSize::precise(sizeof(int)*10))) {
+    
+            case 0: //NoAlias
+                it.first->dump();
+                cout << "is not a valid ptr diff op!" << endl;
+                // errs() <<  *it.second[0] << " is No alias of " << *it.second[1]<< "; " << "\n*************************\n";
+                break;
+            case 1: //MayAlias
+                errs() << *it.second[0] << " is May alias of " <<  *it.second[1] << "; " << "\n*************************\n";
+                break;
+            case 2: //PartialAlias
+                it.first->dump();
+                cout << "is a valid ptr diff op" << endl;
+                // errs() << *it.second[0] << " is Partial alias of " <<  *it.second[1] << "; " << "\n*************************\n";
+                break;
+            case 3: //MustAlias
+                errs() << *it.second[0] << " is Must alias of " <<  *it.second[1] << "; " << "\n*************************\n";
+                break;
+        }
 
       }
     }
 
-    exit(0);
+    
     
 
     
