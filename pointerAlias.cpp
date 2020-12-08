@@ -55,7 +55,7 @@ namespace
 {
 
   unordered_map<Instruction *, vector<Instruction *> > sub_to_gep_map;
-  int n_d = 2;
+  int n_d = 4;
 
   struct pointerAlias : public FunctionPass {
     static char ID;
@@ -75,6 +75,12 @@ namespace
       raw_string_ostream rso(scev_str);
       scev_here->print(rso);
       return rso.str();
+    }
+
+    int getArraySizeFromGep(Instruction * I){
+      Type *T = cast<PointerType>(cast<GetElementPtrInst>(I)->getPointerOperandType())->getElementType();
+      int no_of_elements = cast<ArrayType>(T)->getNumElements();
+      return no_of_elements;
     }
 
   
@@ -160,28 +166,26 @@ namespace
           cin >> n;
           if(BuildSubtrToPtrMapping(child_I, rootGepNode, geps_done_here)) //check if DFS needs to be stopped
             return true;
-        
       }
     }
 
-    int getArraySizeFromGep(Instruction * I){
+    int getArraySizeFromGEP(Instruction * I, DataLayout DL_here){
+      //returns total size of array associated with a GEP instr in Bytes
       Type *T = cast<PointerType>(cast<GetElementPtrInst>(I)->getPointerOperandType())->getElementType();
-      int no_of_elements = cast<ArrayType>(T)->getNumElements();
-      return no_of_elements;
+      return DL_here.getTypeSizeInBits(T)/8;
     }
 
     bool runOnFunction(Function &F) override {
 
+    
       unordered_map<Instruction *, vector<Instruction *> > sub_to_gep_map;
       set<Instruction *> geps_done;
       SetVector<Instruction *> gep_inst_arr;
 
       Module * thisModule = F.getParent();
-      DataLayout DL = DataLayout(thisModule);
+      DataLayout DL = thisModule->getDataLayout();
       AAResults * AA = &(getAnalysis<AAResultsWrapperPass>().getAAResults());
-      auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
-
-      
+      // auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();      
       
       for (Function::iterator Fit = F.begin(), Fend = F.end(); Fit != Fend; ++Fit) {
         BasicBlock &BB = *Fit;
@@ -190,8 +194,9 @@ namespace
           Instruction *I = &*BBit;
           
           if (strcmp(I->getOpcodeName(), "getelementptr") == 0){
+
+            // getArraySizeFromGep_2(I, DL);
             
-        
             cout << "found GEP!" << endl;
             I->dump();
 
@@ -213,6 +218,8 @@ namespace
       displayPtrMap();
       cout << endl <<  "Results: " << endl;
 
+      int firstInstSize, secondInstSize;
+
       for(auto it: ::sub_to_gep_map){
         
         //single sub inst is associated with 2 GEPS, check the alias() between these 2 GEPS
@@ -220,11 +227,20 @@ namespace
 
           int size_of_arr = getArraySizeFromGep(it.second[0]); //im assuming that both geps array to same array
           assert(size_of_arr == getArraySizeFromGep(it.second[1])); //just to make sure
-          int tot_size = pow(size_of_arr, n_d);
+
+                    int tot_size = pow(size_of_arr, n_d);
+
+
+          // firstInstSize = getArraySizeFromGEP(it.second[0], DL);
+          // secondInstSize = getArraySizeFromGEP(it.second[1], DL);
+
+          // cout << firstInstSize << " " << secondInstSize << endl;
+          // exit(0);
+          
 
           switch (AA->alias(it.second[0], LocationSize::precise(sizeof(float)*tot_size), it.second[1], LocationSize::precise(sizeof(float)*tot_size))) 
           {
-      
+
             case 0: //NoAlias
                 it.first->dump();
                 cout << "is not a valid ptr diff op!" << endl;
@@ -246,10 +262,8 @@ namespace
       }
       exit(0);  
       return false;
-      
     }
   };
 } // namespace
-
 char pointerAlias::ID = 10;
 static RegisterPass<pointerAlias> Y("pointerAlias", "pointerAlias pass ", false, false);
