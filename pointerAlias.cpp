@@ -1,7 +1,8 @@
 /* TO DO: 
 
+0. array data type size is hardcoded
 1. Not working for pointers to multidim arrays
-2. Only working for subtr between 2 pointers to an array, not working btw ptr and array base ref 
+2. Only working for subtr between 2 pointers to an array, not working btw ptr and array base ref (e.g. diff = p1-a1)
 3. Not working for subtr btw 2 interprocedural pts
 
 */ 
@@ -26,6 +27,8 @@
 #include "llvm/Analysis/ScalarEvolution.h"
 #include <iostream>
 #include <unordered_map>
+#include <stdlib.h>
+#include <assert.h>
 
 using namespace std;
 using namespace llvm;
@@ -54,6 +57,21 @@ struct pointerAlias : public FunctionPass {
     raw_string_ostream rso(scev_str);
     scev_here->print(rso);
     return rso.str();
+
+  }
+
+  void get_bitlength_from_type(const Type *T){
+
+    // string str;
+    // raw_string_ostream rso(str);
+    // T->print(rso);
+    // // return rso.str();
+    // T->getScalarSizeInBits();
+
+    // cout << atoi(rso.str().c_str());
+
+    // exit(0);
+    // // return atoi(rso);
 
   }
 
@@ -144,6 +162,14 @@ struct pointerAlias : public FunctionPass {
 
   }
 
+  int get_array_size_from_gep(Instruction * I){
+
+    Type *T = cast<PointerType>(cast<GetElementPtrInst>(I)->getPointerOperandType())->getElementType();
+    int no_of_elements = cast<ArrayType>(T)->getNumElements();
+    return no_of_elements;
+  
+  }
+
   bool runOnFunction(Function &F) override {
 
     unordered_map<Instruction *, vector<Instruction *> > sub_to_gep_map;
@@ -194,7 +220,11 @@ struct pointerAlias : public FunctionPass {
     
       if(it.second.size() == 2){ //single sub inst is associated with 2 GEPS, check the alias() between these 2 GEPS
 
-        switch (AA->alias(it.second[0], LocationSize::precise(sizeof(int)*10), it.second[1], LocationSize::precise(sizeof(int)*10))) {
+        int size_of_arr = get_array_size_from_gep(it.second[0]); //im assuming that both geps array to same array
+        assert(size_of_arr == get_array_size_from_gep(it.second[1])); //just to make sure
+
+        switch (AA->alias(it.second[0], LocationSize::precise(sizeof(float)*size_of_arr), it.second[1], LocationSize::precise(sizeof(float)*size_of_arr))) 
+        {
     
             case 0: //NoAlias
                 it.first->dump();
@@ -218,48 +248,7 @@ struct pointerAlias : public FunctionPass {
     }
 
     
-    
-
-    
-    
-
-    
-    
-    exit(0);
-
-    size_t n = Inst_List.size();
-
-    for (unsigned i = 0; i < n; ++i) {
-      auto Inst = Inst_List[i];
-
-      // if (strcmp(inst_arr[i]->getOpcodeName(), "getelementptr") == 0) {
-
-      if (Inst->getOpcodeName()[2] == 'd' || Inst->getOpcodeName()[1] == 'u') {
-        // errs() << *Inst << "\n";
-
-        auto I1 = (dyn_cast<Instruction>(Inst->getOperand(0)))->getOperand(0);
-        auto I2 = (dyn_cast<Instruction>(Inst->getOperand(1)))->getOperand(0);
-
-      
-        switch (AA->alias(I1, LocationSize::precise(1), I2, LocationSize::precise(1))) {
   
-          case 0: //NoAlias
-              errs() << *I1 << " is No alias of " << *I2 << "; " << "\n*************************\n";
-              break;
-          case 1: //MayAlias
-              errs() << *I1 << " is May alias of " << *I2 << "; " << "\n*************************\n";
-              break;
-          case 2: //PartialAlias
-              errs() << *I1 << " is Partial alias of " << *I2 << "; " << "\n*************************\n";
-              break;
-          case 3: //MustAlias
-              errs() << *I1 << " is Must alias of " << *I2 << "; " << "\n*************************\n";
-              break;
-        }
-      }
-
-    }
-
     return false;
   }
 };
