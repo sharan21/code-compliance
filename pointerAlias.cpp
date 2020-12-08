@@ -6,8 +6,6 @@
 
 */ 
 
-
-
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/IntEqClasses.h"
 #include "llvm/ADT/SetVector.h"
@@ -31,9 +29,30 @@
 #include <set>
 #include <math.h>
 
-
 using namespace std;
 using namespace llvm;
+
+
+class ptrInfo{
+  public:
+    Instruction * destGEPInstr; //the GEP associated with the pointer
+    string arrayType; 
+    int arrayDim;
+    int arrayTotSizeInBytes;
+
+    ptrInfo(){
+
+    }
+
+    void getArraySize(){
+
+    Type *T = cast<PointerType>(cast<GetElementPtrInst>(destGEPInstr)->getPointerOperandType())->getElementType();
+    int no_of_elements = cast<ArrayType>(T)->getNumElements();
+    // return no_of_elements;
+  
+  }
+
+};
 
 namespace {
 
@@ -44,7 +63,6 @@ struct pointerAlias : public FunctionPass {
   static char ID;
 
   pointerAlias() : FunctionPass(ID) {}
-
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<AAResultsWrapperPass>();
@@ -62,21 +80,6 @@ struct pointerAlias : public FunctionPass {
     return rso.str();
 
   }
-
-  // void get_bitlength_from_type(const Type *T){
-
-  //   // string str;
-  //   // raw_string_ostream rso(str);
-  //   // T->print(rso);
-  //   // // return rso.str();
-  //   // T->getScalarSizeInBits();
-
-  //   // cout << atoi(rso.str().c_str());
-
-  //   // exit(0);
-  //   // // return atoi(rso);
-
-  // }
 
  
   void displayPtrMap(){
@@ -103,15 +106,6 @@ struct pointerAlias : public FunctionPass {
     return false; 
   }
 
-  void removeDuplicatesFromVector(std::vector<int> &v) //possibly O(n2), so fix your sub_to_gep mapping creation instead of using this!
-{
-    auto end = v.end();
-    for (auto it = v.begin(); it != end; ++it) {
-        end = std::remove(it + 1, end, *it);
-    }
- 
-    v.erase(end, v.end());
-}
 
   bool isKeyInMap(unordered_map<Instruction *, vector<Instruction *> > m, Instruction * key) 
   { 
@@ -136,7 +130,6 @@ struct pointerAlias : public FunctionPass {
         temp.push_back(rootGepNode);
         sub_to_gep_map.insert({I, temp});
         geps_done_here.insert(rootGepNode);
-        // displayPtrMap();
       }
       else{
         //try and update the key
@@ -244,13 +237,6 @@ struct pointerAlias : public FunctionPass {
           }
           
           BuildSubtrToPtrMapping(I, I, geps_done); 
-
-          // for(auto it: geps_done){
-          //   it->dump();
-          // }
-          // exit(0);
-
-          no_of_gep++;
           gep_inst_arr.insert(I);
         }   
 
@@ -263,12 +249,10 @@ struct pointerAlias : public FunctionPass {
         Inst_List.insert(I);
       }
     }
-    cout << endl <<  "Results: " << endl;
 
     displayPtrMap();
+    cout << endl <<  "Results: " << endl;
 
-    
-    
     for(auto it: ::sub_to_gep_map){
     
       if(it.second.size() == 2){ //single sub inst is associated with 2 GEPS, check the alias() between these 2 GEPS
@@ -301,10 +285,7 @@ struct pointerAlias : public FunctionPass {
 
       }
     }
-    exit(0);
-
-    
-  
+    exit(0);  
     return false;
     
   }
