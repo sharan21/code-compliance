@@ -28,7 +28,9 @@
 #include <unordered_map>
 #include <stdlib.h>
 #include <assert.h>
+#include <set>
 #include <math.h>
+
 
 using namespace std;
 using namespace llvm;
@@ -36,7 +38,7 @@ using namespace llvm;
 namespace {
 
 unordered_map<Instruction *, vector<Instruction *> > sub_to_gep_map;
-int n_d = 2; //write code to automatically get the dim of array!
+int n_d = 4;
 
 struct pointerAlias : public FunctionPass {
   static char ID;
@@ -101,6 +103,16 @@ struct pointerAlias : public FunctionPass {
     return false; 
   }
 
+  void removeDuplicatesFromVector(std::vector<int> &v) //possibly O(n2), so fix your sub_to_gep mapping creation instead of using this!
+{
+    auto end = v.end();
+    for (auto it = v.begin(); it != end; ++it) {
+        end = std::remove(it + 1, end, *it);
+    }
+ 
+    v.erase(end, v.end());
+}
+
   bool isKeyInMap(unordered_map<Instruction *, vector<Instruction *> > m, Instruction * key) 
   { 
     if (m.find(key) == m.end()) 
@@ -108,7 +120,7 @@ struct pointerAlias : public FunctionPass {
     return true; 
   }
 
-  bool BuildSubtrToPtrMapping(Instruction * I, Instruction * gep_inst, unordered_map<Instruction *, bool> gep_status){
+  bool BuildSubtrToPtrMapping(Instruction * I, Instruction * gep_inst, set<Instruction *> &geps_done_here){
 
     //Explores Tree of Users with GEP intr as root node and finds sub instr associated with GEP to create mapping 
 
@@ -120,15 +132,16 @@ struct pointerAlias : public FunctionPass {
 
       if(!isKeyInMap(sub_to_gep_map, I)){
         cout << "adding key to ptr to sub mapping!" << endl << endl;
-        gep_status[rootGepNode] = true; //update get 
         vector<Instruction *> temp;
         temp.push_back(rootGepNode);
         sub_to_gep_map.insert({I, temp});
+        geps_done_here.insert(rootGepNode);
         // displayPtrMap();
       }
       else{
-        cout << "updating key!" << endl << endl;
+        //try and update the key
         sub_to_gep_map[I].push_back(rootGepNode);
+        
       }
       return false; //continue DFS and build mapping 
     }
@@ -166,16 +179,16 @@ struct pointerAlias : public FunctionPass {
           
           
           if(next_I->isIdenticalTo(rootGepNode)){ //this GEP is part of same pointer declaration, update the root gep
-            cout << "updated root gep node and updating gep status list!" << endl;
-            gep_status[next_I] = true;
+            cout << "updated root gep node" << endl;
             rootGepNode = child_I;
+            geps_done_here.insert(next_I);
 
           }
         }
 
-        cin >> n;
+        // cin >> n;
 
-        if(BuildSubtrToPtrMapping(child_I, rootGepNode, gep_status)) //check if DFS needs to be stopped
+        if(BuildSubtrToPtrMapping(child_I, rootGepNode, geps_done_here)) //check if DFS needs to be stopped
           return true;
         
     }
@@ -193,12 +206,14 @@ struct pointerAlias : public FunctionPass {
   bool runOnFunction(Function &F) override {
 
     unordered_map<Instruction *, vector<Instruction *> > sub_to_gep_map;
+    set<Instruction *> geps_done;
 
     AAResults * AA = &(getAnalysis<AAResultsWrapperPass>().getAAResults());
     auto &SE = getAnalysis<ScalarEvolutionWrapperPass>().getSE();
 
-    unordered_map<Instruction *, bool> gep_inst_arr; //keeps track of what geps have already been added in mapping
+    // Add all pointers from M to the initial list of pointers
     SetVector<Instruction *> Inst_List;
+    SetVector<Instruction *> gep_inst_arr;
     SetVector<Instruction *> sub_inst_arr;
 
     int no_of_gep = 0;
@@ -213,20 +228,30 @@ struct pointerAlias : public FunctionPass {
         if (strcmp(I->getOpcodeName(), "getelementptr") == 0){
 
           cout << "found GEP!" << endl;
-          I->dump();
 
-          displayPtrMap();
+          //check if this GEP has already been processed before
+          if(geps_done.count(I)){
+            cout << "this gep is alreayd processed! skipping..." << endl;
+            continue;
+          }
+
+          geps_done.insert(I);
+          I->dump();
 
           if(isKeyInMap_2(I)){
             cout << "already mapped this GEP! skipping..." << endl;
             continue;
           }
-
           
-          BuildSubtrToPtrMapping(I, I, gep_inst_arr); 
+          BuildSubtrToPtrMapping(I, I, geps_done); 
+
+          // for(auto it: geps_done){
+          //   it->dump();
+          // }
+          // exit(0);
 
           no_of_gep++;
-          gep_inst_arr.insert({I, false});
+          gep_inst_arr.insert(I);
         }   
 
         if (strcmp(I->getOpcodeName(), "sub") == 0){
@@ -242,7 +267,6 @@ struct pointerAlias : public FunctionPass {
 
     displayPtrMap();
 
-    // exit(0);
     
     
     for(auto it: ::sub_to_gep_map){
@@ -252,8 +276,9 @@ struct pointerAlias : public FunctionPass {
         int size_of_arr = getArraySizeFromGep(it.second[0]); //im assuming that both geps array to same array
         assert(size_of_arr == getArraySizeFromGep(it.second[1])); //just to make sure
 
-        
-        switch (AA->alias(it.second[0], LocationSize::precise(sizeof(float)*pow(size_of_arr, n_d)), it.second[1], LocationSize::precise(sizeof(float)*pow(size_of_arr, n_d)))) 
+        int tot_size = pow(size_of_arr, n_d);
+
+        switch (AA->alias(it.second[0], LocationSize::precise(sizeof(float)*tot_size), it.second[1], LocationSize::precise(sizeof(float)*tot_size))) 
         {
     
           case 0: //NoAlias
@@ -276,8 +301,10 @@ struct pointerAlias : public FunctionPass {
 
       }
     }
-    
     exit(0);
+
+    
+  
     return false;
     
   }
