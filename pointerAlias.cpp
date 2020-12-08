@@ -1,7 +1,6 @@
 /* TO DO: 
 
 0. array data type size is hardcoded
-1. Not working for pointers to multidim arrays
 2. Only working for subtr between 2 pointers to an array, not working btw ptr and array base ref (e.g. diff = p1-a1)
 3. Not working for subtr btw 2 interprocedural pts
 
@@ -51,7 +50,7 @@ struct pointerAlias : public FunctionPass {
     AU.setPreservesAll();
   }
 
-  string convert_scev_to_string(const SCEV *scev_here){
+  string convertScevToString(const SCEV *scev_here){
 
     string scev_str;
     raw_string_ostream rso(scev_str);
@@ -60,65 +59,75 @@ struct pointerAlias : public FunctionPass {
 
   }
 
-  void get_bitlength_from_type(const Type *T){
+  // void get_bitlength_from_type(const Type *T){
 
-    // string str;
-    // raw_string_ostream rso(str);
-    // T->print(rso);
-    // // return rso.str();
-    // T->getScalarSizeInBits();
+  //   // string str;
+  //   // raw_string_ostream rso(str);
+  //   // T->print(rso);
+  //   // // return rso.str();
+  //   // T->getScalarSizeInBits();
 
-    // cout << atoi(rso.str().c_str());
+  //   // cout << atoi(rso.str().c_str());
 
-    // exit(0);
-    // // return atoi(rso);
+  //   // exit(0);
+  //   // // return atoi(rso);
 
-  }
+  // }
 
  
-  void display_mapping(){
-    cout << "displaying ptr to sub array!!" << endl;
+  void displayPtrMap(){
+    cout << "displaying ptr to sub array!" << endl;
 
     for(auto it: sub_to_gep_map){
       it.first->dump();
-      // cout << ""
+      cout << "Is referenced by: " << endl;
+      for(auto itt: it.second)
+        itt->dump();
     }
 
   }
 
-  bool check_key(unordered_map<Instruction *, vector<Instruction *> > m, Instruction * key) 
+  bool isKeyInMap_2(Instruction * key) //maybe we dont need this? just map each gep instruction -> bool to indicate if already added or not
   { 
-    // Key is not present 
+    
+    for(auto it: ::sub_to_gep_map){
+      if(it.second[0]->isIdenticalTo(key))
+        return true;
+      if(it.second.size() == 2 && it.second[1]->isIdenticalTo(key))
+        return true;
+    }
+    return false; 
+  }
+
+  bool isKeyInMap(unordered_map<Instruction *, vector<Instruction *> > m, Instruction * key) 
+  { 
     if (m.find(key) == m.end()) 
-        return false; 
-  
+      return false; 
     return true; 
   }
 
-  bool build_sub_mapping(Instruction * I, Instruction * gep_inst ){
+  bool BuildSubtrToPtrMapping(Instruction * I, Instruction * gep_inst){
+
+    //Explores Tree of Users with GEP intr as root node and finds sub instr associated with GEP to create mapping 
 
     int n;
+    Instruction * rootGepNode = gep_inst;
 
     if(strcmp(I->getOpcodeName(), "sub") == 0){
       // cout << "found sub!" << endl;
 
-      if(!check_key(sub_to_gep_map, I)){
-        
-        //create a new key and update it with the first GEP instruction
+      if(!isKeyInMap(sub_to_gep_map, I)){
         cout << "adding key to ptr to sub mapping!" << endl << endl;
-        vector<Instruction *> trythis;
-        trythis.push_back(gep_inst);
-        sub_to_gep_map.insert({I, trythis});
-
+        vector<Instruction *> temp;
+        temp.push_back(rootGepNode);
+        sub_to_gep_map.insert({I, temp});
+        displayPtrMap();
       }
       else{
-
         cout << "updating key!" << endl << endl;
-        sub_to_gep_map[I].push_back(gep_inst);
+        sub_to_gep_map[I].push_back(rootGepNode);
       }
-
       return false; //continue DFS and build mapping 
-      
     }
     
     for(auto U : I->users()){  // U is of type User*
@@ -135,12 +144,10 @@ struct pointerAlias : public FunctionPass {
           
           // cout << "child is store! checking for circular loop!" << endl;
           //get the destination operand and cast to instruction
-          for (Use &dest_operand : child_I->operands()) {
+          for (Use &dest_operand : child_I->operands()) 
             next_I = dyn_cast<Instruction>(dest_operand);
             
-          }
           // cout << "stores next child is: " << endl;
-        
           //check to see if next user is the previous instruction itself to avoid circular loop
           if(next_I->isIdenticalTo(I)){
             cout << "Loop present!" << endl;
@@ -150,19 +157,28 @@ struct pointerAlias : public FunctionPass {
             // cout << "Loop not present, continue tracing..." << endl;
             child_I = next_I;
           }         
+        }
+        else if(strcmp(child_I->getOpcodeName(), "getelementptr") == 0){
+          Instruction * next_I = dyn_cast<Instruction>(child_I->getOperand(0));
+          
+          
+          if(next_I->isIdenticalTo(rootGepNode)){ //this GEP is part of same pointer declaration, update the root gep
+            cout << "updated root gep node" << endl;
+            rootGepNode = child_I;
 
+          }
         }
 
         // cin >> n;
 
-        if(build_sub_mapping(child_I, gep_inst)) //check if DFS needs to be stopped
+        if(BuildSubtrToPtrMapping(child_I, rootGepNode)) //check if DFS needs to be stopped
           return true;
         
     }
 
   }
 
-  int get_array_size_from_gep(Instruction * I){
+  int getArraySizeFromGep(Instruction * I){
 
     Type *T = cast<PointerType>(cast<GetElementPtrInst>(I)->getPointerOperandType())->getElementType();
     int no_of_elements = cast<ArrayType>(T)->getNumElements();
@@ -181,25 +197,27 @@ struct pointerAlias : public FunctionPass {
     SetVector<Instruction *> Inst_List;
     SetVector<Instruction *> gep_inst_arr;
     SetVector<Instruction *> sub_inst_arr;
+
     int no_of_gep = 0;
     int no_of_sub = 0;
 
-    for (Function::iterator Fit = F.begin(), Fend = F.end(); Fit != Fend;
-         ++Fit) {
+    for (Function::iterator Fit = F.begin(), Fend = F.end(); Fit != Fend; ++Fit) {
       BasicBlock &BB = *Fit;
 
-      for (BasicBlock::iterator BBit = BB.begin(), BBend = BB.end();
-           BBit != BBend; ++BBit) {
-
+      for (BasicBlock::iterator BBit = BB.begin(), BBend = BB.end(); BBit != BBend; ++BBit) {
         Instruction *I = &*BBit;
-
         
         if (strcmp(I->getOpcodeName(), "getelementptr") == 0){
 
           cout << "found GEP!" << endl;
           I->dump();
 
-          build_sub_mapping(I, I); 
+          if(isKeyInMap_2(I)){
+            cout << "already mapped this GEP! skipping..." << endl;
+            continue;
+          }
+          
+          BuildSubtrToPtrMapping(I, I); 
 
           no_of_gep++;
           gep_inst_arr.insert(I);
@@ -215,41 +233,48 @@ struct pointerAlias : public FunctionPass {
       }
     }
     cout << endl <<  "Results: " << endl;
+
+    displayPtrMap();
+
+    // exit(0);
+    
     
     for(auto it: ::sub_to_gep_map){
     
       if(it.second.size() == 2){ //single sub inst is associated with 2 GEPS, check the alias() between these 2 GEPS
 
-        int size_of_arr = get_array_size_from_gep(it.second[0]); //im assuming that both geps array to same array
-        assert(size_of_arr == get_array_size_from_gep(it.second[1])); //just to make sure
+        int size_of_arr = getArraySizeFromGep(it.second[0]); //im assuming that both geps array to same array
+        assert(size_of_arr == getArraySizeFromGep(it.second[1])); //just to make sure
 
         switch (AA->alias(it.second[0], LocationSize::precise(sizeof(float)*size_of_arr), it.second[1], LocationSize::precise(sizeof(float)*size_of_arr))) 
         {
     
-            case 0: //NoAlias
-                it.first->dump();
-                cout << "is not a valid ptr diff op!" << endl;
-                // errs() <<  *it.second[0] << " is No alias of " << *it.second[1]<< "; " << "\n*************************\n";
-                break;
-            case 1: //MayAlias
-                errs() << *it.second[0] << " is May alias of " <<  *it.second[1] << "; " << "\n*************************\n";
-                break;
-            case 2: //PartialAlias
-                it.first->dump();
-                cout << "is a valid ptr diff op" << endl;
-                // errs() << *it.second[0] << " is Partial alias of " <<  *it.second[1] << "; " << "\n*************************\n";
-                break;
-            case 3: //MustAlias
-                errs() << *it.second[0] << " is Must alias of " <<  *it.second[1] << "; " << "\n*************************\n";
-                break;
+          case 0: //NoAlias
+              it.first->dump();
+              cout << "is not a valid ptr diff op!" << endl;
+              // errs() <<  *it.second[0] << " is No alias of " << *it.second[1]<< "; " << "\n*************************\n";
+              break;
+          case 1: //MayAlias
+              errs() << *it.second[0] << " is May alias of " <<  *it.second[1] << "; " << "\n*************************\n";
+              break;
+          case 2: //PartialAlias
+              it.first->dump();
+              cout << "is a valid ptr diff op" << endl;
+              // errs() << *it.second[0] << " is Partial alias of " <<  *it.second[1] << "; " << "\n*************************\n";
+              break;
+          case 3: //MustAlias
+              errs() << *it.second[0] << " is Must alias of " <<  *it.second[1] << "; " << "\n*************************\n";
+              break;
         }
 
       }
     }
+    exit(0);
 
     
   
     return false;
+    
   }
 };
 } // namespace
