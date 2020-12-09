@@ -1,7 +1,4 @@
-/* TO DO: 
-1. Only working for subtr between 2 pointers to an array, not working btw ptr and array base ref (e.g. diff = p1-a1)
-2. Not working for subtr btw 2 interprocedural pts
-*/ 
+
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/IntEqClasses.h"

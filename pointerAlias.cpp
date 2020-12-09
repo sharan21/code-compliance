@@ -1,7 +1,3 @@
-/* TO DO: 
-1. Only working for subtr between 2 pointers to an array, not working btw ptr and array base ref (e.g. diff = p1-a1)
-2. Not working for subtr btw 2 interprocedural pts
-*/ 
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/IntEqClasses.h"
@@ -31,34 +27,11 @@ using namespace std;
 using namespace llvm;
 
 
-class ptrInfo{
-  public:
-    Instruction * destGEPInstr; //the final GEP stored as the pointers RHS value
-    Instruction * firstGEPInstr; //the first GEP used in the declaration for the pointers RHS
-    
-    string arrayType; 
-    int arrayDim;
-    int arrayTotSizeInBytes;
-
-    ptrInfo(){
-
-    }
-
-    void getArraySize(){
-
-      Type *T = cast<PointerType>(cast<GetElementPtrInst>(destGEPInstr)->getPointerOperandType())->getElementType();
-      int no_of_elements = cast<ArrayType>(T)->getNumElements();
-      
-    }
-
-};
-
 namespace 
 {
 
   unordered_map<Instruction *, vector<Instruction *> > sub_to_gep_map;
-  int n_d = 4;
-
+  
   struct pointerAlias : public FunctionPass {
     static char ID;
 
@@ -90,7 +63,9 @@ namespace
       cout << endl << "displaying ptr to sub array!" << endl;
 
       for(auto it: sub_to_gep_map){
+        cout << endl;
         it.first->dump();
+        
         cout << "Is referenced by: " << endl;
         for(auto itt: it.second)
           itt->dump();
@@ -158,6 +133,7 @@ namespace
           if(strcmp(child_I->getOpcodeName(), "getelementptr") == 0){
             Instruction * next_I = dyn_cast<Instruction>(child_I->getOperand(0));
             
+            
             //if this GEP is part of same pointer declaration, update the root gep
             if(next_I->isIdenticalTo(rootGepNode)){ 
               cout << "updated root gep node" << endl;
@@ -171,6 +147,18 @@ namespace
       }
     }
 
+    Instruction * getRootGepFromFinalGep(Instruction * currentGEPInstr){
+      //Recursive algo to traverse tree from final GEP associated with the RHS of a pointer to its first GEP declared
+        
+        Instruction * parentGEP = dyn_cast<Instruction>(currentGEPInstr->getOperand(0));
+        
+        if(strcmp(parentGEP->getOpcodeName(), "getelementptr") != 0)
+          return currentGEPInstr;
+        else
+          return getRootGepFromFinalGep(parentGEP);
+         
+    }
+
     int getArraySizeFromGEP(Instruction * I, DataLayout DL_here){
       //returns total size of array associated with a GEP instr in Bytes
       Type *T = cast<PointerType>(cast<GetElementPtrInst>(I)->getPointerOperandType())->getElementType();
@@ -178,7 +166,6 @@ namespace
     }
 
     bool runOnFunction(Function &F) override {
-
     
       unordered_map<Instruction *, vector<Instruction *> > sub_to_gep_map;
       set<Instruction *> geps_done;
@@ -196,9 +183,7 @@ namespace
           Instruction *I = &*BBit;
           
           if (strcmp(I->getOpcodeName(), "getelementptr") == 0){
-
-            // getArraySizeFromGep_2(I, DL);
-            
+ 
             cout << "found GEP!" << endl;
             I->dump();
 
@@ -208,7 +193,7 @@ namespace
               continue;
             }
 
-            geps_done.insert(I);
+            geps_done.insert(I);            
             
             BuildSubtrToPtrMapping(I, I, geps_done); 
             displayPtrMap();
@@ -226,52 +211,35 @@ namespace
         
         //single sub inst is associated with 2 GEPS, check the alias() between these 2 GEPS
         if(it.second.size() == 2){ 
-
-          // it.second[0]->dump();
-          // exit(0);
-
-         
-
-          // int size_of_arr = getArraySizeFromGep(it.second[0]); //im assuming that both geps array to same array
-          firstInstSize = getArraySizeFromGEP(it.second[0], DL);
-          cout << firstInstSize;
-          // assert(size_of_arr == getArraySizeFromGep(it.second[1])); //just to make sure
-
-          //  cout << "here";
-          exit(0);
-
-          // int tot_size = pow(size_of_arr, n_d);
-
           
+          firstInstSize = getArraySizeFromGEP(getRootGepFromFinalGep(it.second[0]), DL);
+          secondInstSize = getArraySizeFromGEP(getRootGepFromFinalGep(it.second[1]), DL);
 
+          assert(firstInstSize == secondInstSize);
+      
 
-          firstInstSize = getArraySizeFromGEP(it.second[0], DL);
-          // secondInstSize = getArraySizeFromGEP(it.second[1], DL);
+          switch (AA->alias(it.second[0], LocationSize::precise(firstInstSize), it.second[1], LocationSize::precise(secondInstSize))) 
+          {
 
-          // cout << firstInstSize << " " << secondInstSize << endl;
-          // exit(0);
-          
-
-          // switch (AA->alias(it.second[0], LocationSize::precise(sizeof(float)*tot_size), it.second[1], LocationSize::precise(sizeof(float)*tot_size))) 
-          // {
-
-          //   case 0: //NoAlias
-          //       it.first->dump();
-          //       cout << "is not a valid ptr diff op!" << endl;
-          //       // errs() <<  *it.second[0] << " is No alias of " << *it.second[1]<< "; " << "\n*************************\n";
-          //       break;
-          //   case 1: //MayAlias
-          //       errs() << *it.second[0] << " is May alias of " <<  *it.second[1] << "; " << "\n*************************\n";
-          //       break;
-          //   case 2: //PartialAlias
-          //       it.first->dump();
-          //       cout << "is a valid ptr diff op" << endl;
-          //       // errs() << *it.second[0] << " is Partial alias of " <<  *it.second[1] << "; " << "\n*************************\n";
-          //       break;
-          //   case 3: //MustAlias
-          //       errs() << *it.second[0] << " is Must alias of " <<  *it.second[1] << "; " << "\n*************************\n";
-          //       break;
-          // }
+            case 0: //NoAlias
+                it.first->dump();
+                cout << "is not a valid ptr diff op!" << endl;
+                // errs() <<  *it.second[0] << " is No alias of " << *it.second[1]<< "; " << "\n*************************\n";
+                break;
+            case 1: //MayAlias
+                errs() << *it.second[0] << " is May alias of " <<  *it.second[1] << "; " << "\n*************************\n";
+                break;
+            case 2: //PartialAlias
+                it.first->dump();
+                cout << "is a valid ptr diff op" << endl;
+                // errs() << *it.second[0] << " is Partial alias of " <<  *it.second[1] << "; " << "\n*************************\n";
+                break;
+            case 3: //MustAlias
+                it.first->dump();
+                cout << "is a valid ptr diff op" << endl;
+                // errs() << *it.second[0] << " is Must alias of " <<  *it.second[1] << "; " << "\n*************************\n";
+                break;
+          }
         }
       }
       exit(0);  
