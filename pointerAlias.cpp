@@ -61,11 +61,9 @@ namespace
   
     void displayPtrMap(){
       cout << endl << "displaying ptr to sub array!" << endl;
-
       for(auto it: sub_to_gep_map){
         cout << endl;
         it.first->dump();
-        
         cout << "Is referenced by: " << endl;
         for(auto itt: it.second)
           itt->dump();
@@ -80,7 +78,7 @@ namespace
       return true; 
     }
 
-    bool BuildSubtrToPtrMapping(Instruction * I, Instruction * gep_inst, set<Instruction *> &geps_done_here){
+    bool BuildSubtrToPtrMapping(Instruction * I, Instruction * gep_inst, set<Instruction *> &processedGeps_here){
       //Explores Tree of Users with GEP intr as root node and finds sub instr associated with GEP to create mapping 
 
       int n;
@@ -101,14 +99,14 @@ namespace
           
         }
         //continue DFS and build mapping 
-        geps_done_here.insert(rootGepNode);
+        processedGeps_here.insert(rootGepNode);
         return false; 
       }
       
-      for(auto U : I->users()){  // U is of type User*
+      for(auto U : I->users()){  
       
           //cast child user as instruction
-          auto child_I = dyn_cast<Instruction>(U);
+          Instruction * child_I = dyn_cast<Instruction>(U);
           Instruction * next_I;
 
           cout << "child is:" << endl;
@@ -133,23 +131,21 @@ namespace
           if(strcmp(child_I->getOpcodeName(), "getelementptr") == 0){
             Instruction * next_I = dyn_cast<Instruction>(child_I->getOperand(0));
             
-            
             //if this GEP is part of same pointer declaration, update the root gep
             if(next_I->isIdenticalTo(rootGepNode)){ 
               cout << "updated root gep node" << endl;
               rootGepNode = child_I;
-              geps_done_here.insert(next_I);
+              processedGeps_here.insert(next_I);
             }
           }
           // cin >> n;
-          if(BuildSubtrToPtrMapping(child_I, rootGepNode, geps_done_here)) //check if DFS needs to be stopped
+          if(BuildSubtrToPtrMapping(child_I, rootGepNode, processedGeps_here)) //check if DFS needs to be stopped
             return true;
       }
     }
 
     Instruction * getRootGepFromFinalGep(Instruction * currentGEPInstr){
       //Recursive algo to traverse tree from final GEP associated with the RHS of a pointer to its first GEP declared
-        
         Instruction * parentGEP = dyn_cast<Instruction>(currentGEPInstr->getOperand(0));
         
         if(strcmp(parentGEP->getOpcodeName(), "getelementptr") != 0)
@@ -168,8 +164,7 @@ namespace
     bool runOnFunction(Function &F) override {
     
       unordered_map<Instruction *, vector<Instruction *> > sub_to_gep_map;
-      set<Instruction *> geps_done;
-      SetVector<Instruction *> gep_inst_arr;
+      set<Instruction *> processedGeps;
 
       Module * thisModule = F.getParent();
       DataLayout DL = thisModule->getDataLayout();
@@ -188,37 +183,36 @@ namespace
             I->dump();
 
             //check if this GEP has already been processed before
-            if(geps_done.find(I) != geps_done.end()){
+            if(processedGeps.find(I) != processedGeps.end()){
               cout << "this gep is alreayd processed! skipping..." << endl;
               continue;
             }
 
-            geps_done.insert(I);            
-            
-            BuildSubtrToPtrMapping(I, I, geps_done); 
-            displayPtrMap();
-            gep_inst_arr.insert(I);
+            processedGeps.insert(I);            
+            BuildSubtrToPtrMapping(I, I, processedGeps); 
+          
           }   
         }
       }
 
       displayPtrMap();
+
+      // exit(0);
       cout << endl <<  "Results: " << endl;
 
-      int firstInstSize, secondInstSize;
+      int firstObjSize, secondObjSize;
 
       for(auto it: ::sub_to_gep_map){
         
         //single sub inst is associated with 2 GEPS, check the alias() between these 2 GEPS
         if(it.second.size() == 2){ 
           
-          firstInstSize = getArraySizeFromGEP(getRootGepFromFinalGep(it.second[0]), DL);
-          secondInstSize = getArraySizeFromGEP(getRootGepFromFinalGep(it.second[1]), DL);
+          firstObjSize = getArraySizeFromGEP(getRootGepFromFinalGep(it.second[0]), DL);
+          secondObjSize = getArraySizeFromGEP(getRootGepFromFinalGep(it.second[1]), DL);
 
-          assert(firstInstSize == secondInstSize);
-      
+          assert(firstObjSize == secondObjSize);
 
-          switch (AA->alias(it.second[0], LocationSize::precise(firstInstSize), it.second[1], LocationSize::precise(secondInstSize))) 
+          switch (AA->alias(it.second[0], LocationSize::precise(firstObjSize), it.second[1], LocationSize::precise(secondObjSize))) 
           {
 
             case 0: //NoAlias
