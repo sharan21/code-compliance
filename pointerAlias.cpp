@@ -73,9 +73,23 @@ namespace
 
     bool isKeyInMap(unordered_map<Instruction *, vector<Instruction *> > m, Instruction * key) 
     { 
+  
       if (m.find(key) == m.end()) 
         return false; 
       return true; 
+    }
+
+    Instruction * getAffectedPtrFromGEP(Instruction * I){
+      //takes a GEP instruction and determines which pointer it computers the RHS for
+
+      for(auto U : I->users()){ //improve this code! dont use for loop 
+        
+        //the first user of a GEP is always a store 
+        Instruction * storeInst = dyn_cast<Instruction>(U); 
+        return dyn_cast<Instruction>(storeInst->getOperand(1));
+
+      }  
+  
     }
 
     bool BuildSubtrToPtrMapping(Instruction * I, Instruction * gep_inst, set<Instruction *> &processedGeps_here){
@@ -86,7 +100,8 @@ namespace
 
       if(strcmp(I->getOpcodeName(), "sub") == 0){
       
-        if(!isKeyInMap(sub_to_gep_map, I)){
+        if(!isKeyInMap(sub_to_gep_map, I)){ //check to see if this target sub has been added before
+
           cout << "adding key to ptr to sub mapping!" << endl << endl;
           vector<Instruction *> temp;
           temp.push_back(rootGepNode);
@@ -161,6 +176,15 @@ namespace
       return DL_here.getTypeSizeInBits(T)/8;
     }
 
+    bool doGepsPointToSameArray(Instruction * firstGep, Instruction * secondGep){
+      //takes 2 geps and sees if they reference the same array
+      
+      Instruction * firstArray = getAffectedPtrFromGEP(firstGep);
+      Instruction * secondArray = getAffectedPtrFromGEP(secondGep);
+
+      return(firstArray.isIdenticalTo(secondArray));
+    }
+
     bool runOnFunction(Function &F) override {
     
       unordered_map<Instruction *, vector<Instruction *> > sub_to_gep_map;
@@ -197,12 +221,18 @@ namespace
 
       displayPtrMap();
 
-      // exit(0);
+
       cout << endl <<  "Results: " << endl;
 
       int firstObjSize, secondObjSize;
 
       for(auto it: ::sub_to_gep_map){
+
+        cout << "the pointer associated with GEP:";
+        it.second[0]->dump();
+        cout << "is:" << endl;
+        getAffectedPtrFromGEP(it.second[0])->dump();
+        exit(0);
         
         //single sub inst is associated with 2 GEPS, check the alias() between these 2 GEPS
         if(it.second.size() == 2){ 
