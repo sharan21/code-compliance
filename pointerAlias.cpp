@@ -26,6 +26,8 @@
 using namespace std;
 using namespace llvm;
 
+int height = 0;
+
 
 namespace 
 {
@@ -84,38 +86,56 @@ namespace
 
       for(auto U : I->users()){ //improve this code! dont use for loop 
         
-        //the first user of a GEP is always a store 
-        Instruction * storeInst = dyn_cast<Instruction>(U); 
-        return dyn_cast<Instruction>(storeInst->getOperand(1));
-
+        Instruction * inst = dyn_cast<Instruction>(U); 
+        
+        if(strcmp(inst->getOpcodeName(), "store") == 0)
+          return dyn_cast<Instruction>(inst->getOperand(1)); 
+        else{
+          assert(strcmp(inst->getOpcodeName(), "ptrtoint") == 0);
+          return nullptr;
+        }
       }  
   
     }
 
-    bool BuildSubtrToPtrMapping(Instruction * I, Instruction * gep_inst, set<Instruction *> &processedGeps_here){
+    void BuildSubtrToPtrMapping(Instruction * I, Instruction * gep_inst, set<Instruction *> &processedGeps_here){
       //Explores Tree of Users with GEP intr as root node and finds sub instr associated with GEP to create mapping 
 
-      int n;
+      
+      
+      
       Instruction * rootGepNode = gep_inst;
 
-      if(strcmp(I->getOpcodeName(), "sub") == 0){
+      if(strcmp(I->getOpcodeName(), "sub") == 0){ //we found the target sub instruction!
       
         if(!isKeyInMap(sub_to_gep_map, I)){ //check to see if this target sub has been added before
 
-          cout << "adding key to ptr to sub mapping!" << endl << endl;
+          // cout << "adding key to ptr to sub mapping!" << endl << endl;
           vector<Instruction *> temp;
           temp.push_back(rootGepNode);
           sub_to_gep_map.insert({I, temp});
-          rootGepNode->dump();
+          // rootGepNode->dump();
         }
         else{
-          cout << "here" << endl;
-          sub_to_gep_map[I].push_back(rootGepNode);
+          bool updated = false;
+          for(int i = 0; i < sub_to_gep_map[I].size(); i++){
+            //check if we need to update a GEP or add a new one
+            // cout << "checking if update needed..." << endl;
+      
+            if(doGepsPointToSameArray(sub_to_gep_map[I][i], gep_inst)){
+              // cout << "updating with latest GEP!" << endl;
+              sub_to_gep_map[I][i] = gep_inst;
+              updated = true;
+              break;
+            }
+          }
+          if(!updated)
+            sub_to_gep_map[I].push_back(rootGepNode);
           
         }
         //continue DFS and build mapping 
         processedGeps_here.insert(rootGepNode);
-        return false; 
+        return ; 
       }
       
       for(auto U : I->users()){  
@@ -123,9 +143,9 @@ namespace
           //cast child user as instruction
           Instruction * child_I = dyn_cast<Instruction>(U);
           Instruction * next_I;
-
-          cout << "child is:" << endl;
-          child_I->dump();
+        
+          // cout << "child at height: " <<height<<" is:" << endl;
+          // child_I->dump();
 
           //if the next user is store, we need to obtain the destination instruction * of the store op, then resume tracing
           if(strcmp(child_I->getOpcodeName(), "store") == 0){ 
@@ -136,8 +156,8 @@ namespace
               
             //check to see if next user is the previous instruction itself to avoid circular loop
             if(next_I->isIdenticalTo(I)){
-              cout << "Loop present!" << endl;
-              return true; 
+              // cout << "Loop present!" << endl;
+              return; 
             }
             else{
               child_I = next_I;
@@ -148,14 +168,13 @@ namespace
             
             //if this GEP is part of same pointer declaration, update the root gep
             if(next_I->isIdenticalTo(rootGepNode)){ 
-              cout << "updated root gep node" << endl;
+              // cout << "updated root gep node" << endl;
               rootGepNode = child_I;
               processedGeps_here.insert(next_I);
             }
           }
-          // cin >> n;
-          if(BuildSubtrToPtrMapping(child_I, rootGepNode, processedGeps_here)) //check if DFS needs to be stopped
-            return true;
+          BuildSubtrToPtrMapping(child_I, rootGepNode, processedGeps_here); //check if DFS needs to be stopped
+        
       }
     }
 
@@ -179,10 +198,9 @@ namespace
     bool doGepsPointToSameArray(Instruction * firstGep, Instruction * secondGep){
       //takes 2 geps and sees if they reference the same array
       
-      Instruction * firstArray = getAffectedPtrFromGEP(firstGep);
+      Instruction * firstArray = getAffectedPtrFromGEP(firstGep);    
       Instruction * secondArray = getAffectedPtrFromGEP(secondGep);
-
-      return(firstArray.isIdenticalTo(secondArray));
+      return(firstArray == secondArray);
     }
 
     bool runOnFunction(Function &F) override {
@@ -203,36 +221,33 @@ namespace
           
           if (strcmp(I->getOpcodeName(), "getelementptr") == 0){
  
-            cout << "found GEP!" << endl;
-            I->dump();
+            // cout << "found GEP!" << endl;
+            // I->dump();
 
             //check if this GEP has already been processed before
             if(processedGeps.find(I) != processedGeps.end()){
-              cout << "this gep is alreayd processed! skipping..." << endl;
+              // cout << "this gep is alreayd processed! skipping..." << endl;
               continue;
             }
 
-            processedGeps.insert(I);            
+            processedGeps.insert(I);           
+            height = 0;
             BuildSubtrToPtrMapping(I, I, processedGeps); 
           
           }   
         }
       }
 
-      displayPtrMap();
+      // displayPtrMap();
 
 
-      cout << endl <<  "Results: " << endl;
+      // cout << endl <<  "Results: " << endl;
 
       int firstObjSize, secondObjSize;
 
       for(auto it: ::sub_to_gep_map){
 
-        cout << "the pointer associated with GEP:";
-        it.second[0]->dump();
-        cout << "is:" << endl;
-        getAffectedPtrFromGEP(it.second[0])->dump();
-        exit(0);
+  
         
         //single sub inst is associated with 2 GEPS, check the alias() between these 2 GEPS
         if(it.second.size() == 2){ 

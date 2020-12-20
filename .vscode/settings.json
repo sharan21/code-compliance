@@ -6,6 +6,10 @@
         "unordered_map": "cpp",
         "vector": "cpp",
         "iostream": "cpp",
-        "ostream": "cpp"
+        "ostream": "cpp",
+        "array": "cpp",
+        "list": "cpp",
+        "string_view": "cpp",
+        "initializer_list": "cpp"
     }
 }
