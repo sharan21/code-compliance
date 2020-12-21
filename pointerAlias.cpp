@@ -26,13 +26,10 @@
 using namespace std;
 using namespace llvm;
 
-int height = 0;
-
-
 namespace 
 {
 
-  unordered_map<Instruction *, vector<Instruction *> > sub_to_gep_map;
+  unordered_map<Instruction *, vector<Instruction *> > subToGepMap;
   
   struct pointerAlias : public FunctionPass {
     static char ID;
@@ -63,7 +60,7 @@ namespace
   
     void displayPtrMap(){
       cout << endl << "displaying ptr to sub array!" << endl;
-      for(auto it: sub_to_gep_map){
+      for(auto it: subToGepMap){
         cout << endl;
         it.first->dump();
         cout << "Is referenced by: " << endl;
@@ -98,39 +95,36 @@ namespace
   
     }
 
-    void BuildSubtrToPtrMapping(Instruction * I, Instruction * gep_inst, set<Instruction *> &processedGeps_here){
+    void BuildSubtrToPtrMapping(Instruction * I, Instruction * rootGepInst, set<Instruction *> &processedGeps_here){
       //Explores Tree of Users with GEP intr as root node and finds sub instr associated with GEP to create mapping 
 
-      
-      
-      
-      Instruction * rootGepNode = gep_inst;
+      Instruction * rootGepNode = rootGepInst;
 
       if(strcmp(I->getOpcodeName(), "sub") == 0){ //we found the target sub instruction!
       
-        if(!isKeyInMap(sub_to_gep_map, I)){ //check to see if this target sub has been added before
+        if(!isKeyInMap(subToGepMap, I)){ //check to see if this target sub has been added before
 
           // cout << "adding key to ptr to sub mapping!" << endl << endl;
           vector<Instruction *> temp;
           temp.push_back(rootGepNode);
-          sub_to_gep_map.insert({I, temp});
+          subToGepMap.insert({I, temp});
           // rootGepNode->dump();
         }
         else{
           bool updated = false;
-          for(int i = 0; i < sub_to_gep_map[I].size(); i++){
+          for(int i = 0; i < subToGepMap[I].size(); i++){
             //check if we need to update a GEP or add a new one
             // cout << "checking if update needed..." << endl;
       
-            if(doGepsPointToSameArray(sub_to_gep_map[I][i], gep_inst)){
+            if(doGepsPointToSameArray(subToGepMap[I][i], rootGepInst)){
               // cout << "updating with latest GEP!" << endl;
-              sub_to_gep_map[I][i] = gep_inst;
+              subToGepMap[I][i] = rootGepInst;
               updated = true;
               break;
             }
           }
           if(!updated)
-            sub_to_gep_map[I].push_back(rootGepNode);
+            subToGepMap[I].push_back(rootGepNode);
           
         }
         //continue DFS and build mapping 
@@ -205,7 +199,7 @@ namespace
 
     bool runOnFunction(Function &F) override {
     
-      unordered_map<Instruction *, vector<Instruction *> > sub_to_gep_map;
+      unordered_map<Instruction *, vector<Instruction *> > subToGepMap;
       set<Instruction *> processedGeps;
 
       Module * thisModule = F.getParent();
@@ -239,22 +233,14 @@ namespace
       }
 
       // displayPtrMap();
-
-
-      // cout << endl <<  "Results: " << endl;
-
       int firstObjSize, secondObjSize;
 
-      for(auto it: ::sub_to_gep_map){
+      for(auto it: ::subToGepMap){
 
-  
-        
-        //single sub inst is associated with 2 GEPS, check the alias() between these 2 GEPS
         if(it.second.size() == 2){ 
           
           firstObjSize = getArraySizeFromGEP(getRootGepFromFinalGep(it.second[0]), DL);
           secondObjSize = getArraySizeFromGEP(getRootGepFromFinalGep(it.second[1]), DL);
-
           assert(firstObjSize == secondObjSize);
 
           switch (AA->alias(it.second[0], LocationSize::precise(firstObjSize), it.second[1], LocationSize::precise(secondObjSize))) 
